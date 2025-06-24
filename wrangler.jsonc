@@ -1,0 +1,27 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "msfback",
+  "account_id": "54ab6e4bdf9ac63e765393d3ec277d6c",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-06-23",
+  "minify": true,
+  // "compatibility_flags": [
+  //   "nodejs_compat"
+  // ],
+  // "vars": {
+  //   "MY_VAR": "my-variable"
+  // },
+  "kv_namespaces": [
+    {
+      "binding": "FORM_SESSION",
+      "id": "c4231f34b286485eb0b0d1e3bd036fc0"
+    }
+  ],
+  "dev": {
+    "port": 3000
+  },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  }
+}

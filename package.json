@@ -1,0 +1,21 @@
+{
+  "name": "msfback",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy --minify",
+    "cf-typegen": "wrangler types --env-interface CloudflareBindings"
+  },
+  "dependencies": {
+    "@hono/zod-validator": "^0.4.3",
+    "hono": "^4.7.9",
+    "nanoid": "^5.1.5",
+    "sanitize-html": "^2.14.0",
+    "zod": "^3.25.51"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250620.0",
+    "@types/sanitize-html": "^2.16.0",
+    "wrangler": "^4.4.0"
+  },
+  "packageManager": "pnpm@10.10.0+sha512.d615db246fe70f25dcfea6d8d73dee782ce23e2245e3c4f6f888249fb568149318637dca73c2c5c8ef2a4ca0d5657fb9567188bfab47f566d1ee6ce987815c39"
+}
