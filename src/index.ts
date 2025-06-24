@@ -138,7 +138,6 @@ const updateSession = async (
       ...existing,
       ...updates,
       id: existing.id,
-      current_step: 1,
       created_at: now,
       updated_at: now,
     };
@@ -380,8 +379,8 @@ app.put("/:sessionId/addons", zValidator("json", AddonsSchema), async (c) => {
 
     return c.json({
       status: "success",
-      current_step: 3,
-      next_step: 4,
+      current_step: updatedSession.current_step,
+      next_step: updatedSession.current_step + 1,
       selected_addons: selectedAddons,
     });
   } catch (error) {
