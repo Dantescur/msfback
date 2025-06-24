@@ -33,6 +33,10 @@ export const NavigateSchema = z.object({
   step: z.number().min(1).max(4),
 });
 
+export const sessionIdSchema = z.object({
+  sessionId: z.string().length(21, "Invalid sessionId"),
+});
+
 export const sanitizePersonalInfo = (info: PersonalInfo): PersonalInfo => ({
   ...info,
   name: sanitizeHtml(info.name, { allowedTags: [], allowedAttributes: {} }),

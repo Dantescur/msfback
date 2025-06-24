@@ -15,6 +15,7 @@ import {
   PersonalInfoSchema,
   PlanSelectionSchema,
   sanitizePersonalInfo,
+  sessionIdSchema,
 } from "./schemas";
 import { showRoutes } from "hono/dev";
 import { prettyJSON } from "hono/pretty-json";
@@ -126,15 +127,20 @@ const updateSession = async (
 
   return withRetry(async () => {
     const existing = await getSession(kv, sessionId);
+
+    if (!existing) {
+      throw new Error("Session does not exist for update.");
+    }
+
     const now = new Date().toISOString();
 
     const updatedSession: FormSession = {
-      id: sessionId,
+      ...existing,
+      ...updates,
+      id: existing.id,
       current_step: 1,
       created_at: now,
       updated_at: now,
-      ...existing,
-      ...updates,
     };
 
     if (updatedSession.current_step < 1 || updatedSession.current_step > 4) {
@@ -197,12 +203,27 @@ app.put(
   zValidator("json", PersonalInfoSchema),
   async (c) => {
     const { sessionId } = c.req.param();
+
+    const parsedSessionId = sessionIdSchema.safeParse({ sessionId });
+
+    if (!parsedSessionId.success) {
+      return c.json(
+        errorResponse(
+          "Invalid session ID format",
+          parsedSessionId.error.errors[0].message,
+        ),
+        400,
+      );
+    }
+
+    const validatedSessionId = parsedSessionId.data.sessionId;
+
     const personalInfo = sanitizePersonalInfo(c.req.valid("json"));
 
     try {
       const updatedSession = await updateSession(
         c.env.FORM_SESSION,
-        sessionId,
+        validatedSessionId,
         {
           personal_info: personalInfo as PersonalInfo,
           current_step: 2,
@@ -215,6 +236,18 @@ app.put(
         next_step: updatedSession.current_step + 1,
       });
     } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message === "Session does not exist for update."
+      ) {
+        return c.json(
+          errorResponse(
+            "Session Not Found",
+            "The provided session ID does not exist or has expired.",
+          ),
+          404,
+        );
+      }
       return c.json(
         errorResponse(
           "Failed to save personal info",
@@ -232,6 +265,20 @@ app.put(
   async (c) => {
     const { sessionId } = c.req.param();
 
+    const parsedSessionId = sessionIdSchema.safeParse({ sessionId });
+
+    if (!parsedSessionId.success) {
+      return c.json(
+        errorResponse(
+          "Invalid session ID format",
+          parsedSessionId.error.errors[0].message,
+        ),
+        400,
+      );
+    }
+
+    const validatedSessionId = parsedSessionId.data.sessionId;
+
     try {
       const planSelection = c.req.valid("json");
       const selectedPlan = PLANS.find((p) => p.id === planSelection.plan_id);
@@ -248,7 +295,7 @@ app.put(
 
       const updatedSession = await updateSession(
         c.env.FORM_SESSION,
-        sessionId,
+        validatedSessionId,
         {
           plan_selection: planSelection as PlanSelection,
           current_step: 3,
@@ -270,6 +317,18 @@ app.put(
         },
       });
     } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message === "Session does not exist for update."
+      ) {
+        return c.json(
+          errorResponse(
+            "Session Not Found",
+            "The provided session ID does not exist or has expired.",
+          ),
+          404,
+        );
+      }
       return c.json(
         errorResponse(
           "Failed to save plan selection",
@@ -283,12 +342,30 @@ app.put(
 app.put("/:sessionId/addons", zValidator("json", AddonsSchema), async (c) => {
   const { sessionId } = c.req.param();
 
+  const parsedSessionId = sessionIdSchema.safeParse({ sessionId });
+
+  if (!parsedSessionId.success) {
+    return c.json(
+      errorResponse(
+        "Invalid session ID format",
+        parsedSessionId.error.errors[0].message,
+      ),
+      400,
+    );
+  }
+
+  const validatedSessionId = parsedSessionId.data.sessionId;
+
   try {
     const { addons } = c.req.valid("json") as { addons: AddonId[] };
-    const updatedSession = await updateSession(c.env.FORM_SESSION, sessionId, {
-      addons,
-      current_step: 4,
-    });
+    const updatedSession = await updateSession(
+      c.env.FORM_SESSION,
+      validatedSessionId,
+      {
+        addons,
+        current_step: 4,
+      },
+    );
 
     const selectedAddons = ADDONS.filter((addon) =>
       addons.includes(addon.id),
@@ -308,6 +385,18 @@ app.put("/:sessionId/addons", zValidator("json", AddonsSchema), async (c) => {
       selected_addons: selectedAddons,
     });
   } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message === "Session does not exist for update."
+    ) {
+      return c.json(
+        errorResponse(
+          "Session Not Found",
+          "The provided session ID does not exist or has expired.",
+        ),
+        404,
+      );
+    }
     return c.json(
       errorResponse(
         "Failed to save addons",
@@ -321,8 +410,22 @@ app.put("/:sessionId/addons", zValidator("json", AddonsSchema), async (c) => {
 app.post("/:sessionId/submit", async (c) => {
   const { sessionId } = c.req.param();
 
+  const parsedSessionId = sessionIdSchema.safeParse({ sessionId });
+
+  if (!parsedSessionId.success) {
+    return c.json(
+      errorResponse(
+        "Invalid session ID format",
+        parsedSessionId.error.errors[0].message,
+      ),
+      400,
+    );
+  }
+
+  const validatedSessionId = parsedSessionId.data.sessionId;
+
   try {
-    const session = await getSession(c.env.FORM_SESSION, sessionId);
+    const session = await getSession(c.env.FORM_SESSION, validatedSessionId);
     if (!session) {
       return c.json(
         errorResponse("Session not found", "No session with this ID exists"),
@@ -408,6 +511,18 @@ app.post("/:sessionId/submit", async (c) => {
       },
     });
   } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message === "Session does not exist for update."
+    ) {
+      return c.json(
+        errorResponse(
+          "Session Not Found",
+          "The provided session ID does not exist or has expired.",
+        ),
+        404,
+      );
+    }
     return c.json(
       errorResponse(
         "Submission failed",
@@ -421,8 +536,22 @@ app.post("/:sessionId/submit", async (c) => {
 app.get("/:sessionId", async (c) => {
   const { sessionId } = c.req.param();
 
+  const parsedSessionId = sessionIdSchema.safeParse({ sessionId });
+
+  if (!parsedSessionId.success) {
+    return c.json(
+      errorResponse(
+        "Invalid session ID format",
+        parsedSessionId.error.errors[0].message,
+      ),
+      400,
+    );
+  }
+
+  const validatedSessionId = parsedSessionId.data.sessionId;
+
   try {
-    const session = await getSession(c.env.FORM_SESSION, sessionId);
+    const session = await getSession(c.env.FORM_SESSION, validatedSessionId);
 
     if (!session) {
       return c.json(
@@ -465,6 +594,18 @@ app.get("/:sessionId", async (c) => {
         .filter(Boolean),
     });
   } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message === "Session does not exist for update."
+    ) {
+      return c.json(
+        errorResponse(
+          "Session Not Found",
+          "The provided session ID does not exist or has expired.",
+        ),
+        404,
+      );
+    }
     return c.json(
       errorResponse(
         "Failed to submit data",
@@ -481,10 +622,25 @@ app.post(
   zValidator("json", NavigateSchema),
   async (c) => {
     const { sessionId } = c.req.param();
+
+    const parsedSessionId = sessionIdSchema.safeParse({ sessionId });
+
+    if (!parsedSessionId.success) {
+      return c.json(
+        errorResponse(
+          "Invalid session ID format",
+          parsedSessionId.error.errors[0].message,
+        ),
+        400,
+      );
+    }
+
+    const validatedSessionId = parsedSessionId.data.sessionId;
+
     const { step } = c.req.valid("json");
 
     try {
-      const session = await getSession(c.env.FORM_SESSION, sessionId);
+      const session = await getSession(c.env.FORM_SESSION, validatedSessionId);
       if (!session) {
         return c.json(errorResponse("Session not found", "?"), 404);
       }
@@ -500,7 +656,7 @@ app.post(
         );
       }
 
-      await updateSession(c.env.FORM_SESSION, sessionId, {
+      await updateSession(c.env.FORM_SESSION, validatedSessionId, {
         current_step: step,
       });
 
@@ -509,6 +665,18 @@ app.post(
         current_step: step,
       });
     } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message === "Session does not exist for update."
+      ) {
+        return c.json(
+          errorResponse(
+            "Session Not Found",
+            "The provided session ID does not exist or has expired.",
+          ),
+          404,
+        );
+      }
       return c.json(
         errorResponse(
           "Failed to navigate to step",
@@ -523,8 +691,22 @@ app.post(
 app.delete("/:sessionId", async (c) => {
   const { sessionId } = c.req.param();
 
+  const parsedSessionId = sessionIdSchema.safeParse({ sessionId });
+
+  if (!parsedSessionId.success) {
+    return c.json(
+      errorResponse(
+        "Invalid session ID format",
+        parsedSessionId.error.errors[0].message,
+      ),
+      400,
+    );
+  }
+
+  const validatedSessionId = parsedSessionId.data.sessionId;
+
   try {
-    const session = await getSession(c.env.FORM_SESSION, sessionId);
+    const session = await getSession(c.env.FORM_SESSION, validatedSessionId);
 
     if (!session) {
       return c.json(
@@ -533,9 +715,21 @@ app.delete("/:sessionId", async (c) => {
       );
     }
 
-    await c.env.FORM_SESSION.delete(`session:${sessionId}`);
+    await c.env.FORM_SESSION.delete(`session:${validatedSessionId}`);
     return c.json({ status: "success", message: "Session deleted" });
   } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message === "Session does not exist for update."
+    ) {
+      return c.json(
+        errorResponse(
+          "Session Not Found",
+          "The provided session ID does not exist or has expired.",
+        ),
+        404,
+      );
+    }
     return c.json(
       errorResponse(
         "Failed to delete session",
