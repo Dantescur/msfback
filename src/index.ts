@@ -11,7 +11,7 @@ import {
 import {
   AddonId,
   AddonsSchema,
-  NavigateSchema,
+  // NavigateSchema,
   PersonalInfoSchema,
   PlanSelectionSchema,
   sanitizePersonalInfo,
@@ -38,34 +38,75 @@ const errorResponse = (message: string, details: string) => ({
 });
 
 const isFormSession = (data: any): data is FormSession => {
-  return (
+  const baseCheck =
     data &&
-    typeof data.id == "string" &&
-    typeof data.current_step == "number" &&
+    typeof data.id === "string" &&
+    typeof data.current_step === "number" &&
     data.current_step >= 1 &&
-    data.current_step <= 4
-  );
+    data.current_step <= 4;
+  if (!baseCheck) return false;
+  if (
+    data.personal_info &&
+    !PersonalInfoSchema.safeParse(data.personal_info).success
+  )
+    return false;
+  if (
+    data.plan_selection &&
+    !PlanSelectionSchema.safeParse(data.plan_selection).success
+  )
+    return false;
+  if (data.addons && !AddonsSchema.safeParse({ addons: data.addons }).success)
+    return false;
+  return true;
 };
 
 // Retry wrapper
 const withRetry = async <T>(
   operation: () => Promise<T>,
-  maxRetries: number = MAX_RETRIES,
-  initialDelayMs: number = INITIAL_RETRY_DELAY_MS,
-): Promise<T> => {
+  maxRetries: number,
+  initialDelayMs: number,
+) => {
   let lastError: unknown;
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
       return await operation();
     } catch (error) {
       lastError = error;
-      if (attempt < maxRetries - 1) {
-        const delay = initialDelayMs * Math.pow(2, attempt);
-        await new Promise((resolve) => setTimeout(resolve, delay));
-      }
+      if (error instanceof Error && error.message.includes("permission"))
+        throw error; // Fail fast
+      if (attempt < maxRetries - 1)
+        await new Promise((r) =>
+          setTimeout(r, initialDelayMs * Math.pow(2, attempt)),
+        );
     }
   }
   throw lastError;
+};
+
+const getHATEOASLinks = (
+  sessionId: string,
+  session: FormSession,
+): Record<string, { href: string; method: string }> => {
+  const baseUrl = `/${sessionId}`;
+  const links: Record<string, { href: string; method: string }> = {
+    self: { href: baseUrl, method: "GET" },
+    delete: { href: baseUrl, method: "DELETE" },
+  };
+
+  links.personal = { href: `${baseUrl}/personal`, method: "PUT" };
+  links.plan = { href: `${baseUrl}/plan`, method: "PUT" };
+  links.addons = { href: `${baseUrl}/addons`, method: "PUT" };
+  if (
+    session.personal_info &&
+    PersonalInfoSchema.safeParse(session.personal_info).success &&
+    session.plan_selection &&
+    PlanSelectionSchema.safeParse(session.plan_selection).success &&
+    session.addons &&
+    AddonsSchema.safeParse({ addons: session.addons }).success
+  ) {
+    links.submit = { href: `${baseUrl}/submit`, method: "POST" };
+  }
+  return links;
 };
 
 // Middlewares
@@ -121,37 +162,57 @@ const updateSession = async (
   sessionId: string,
   updates: Partial<FormSession>,
 ): Promise<FormSession> => {
-  if (!kv) {
-    throw new Error("KV namespace not available");
-  }
+  if (!kv) throw new Error("KV namespace not available");
 
-  return withRetry(async () => {
-    const existing = await getSession(kv, sessionId);
+  return withRetry(
+    async () => {
+      const existing = await getSession(kv, sessionId);
 
-    if (!existing) {
-      throw new Error("Session does not exist for update.");
-    }
+      if (!existing) {
+        throw new Error("Session does not exist for update.");
+      }
 
-    const now = new Date().toISOString();
+      const now = new Date().toISOString();
 
-    const updatedSession: FormSession = {
-      ...existing,
-      ...updates,
-      id: existing.id,
-      created_at: now,
-      updated_at: now,
-    };
+      const updatedSession: FormSession = {
+        ...existing,
+        ...updates,
+        id: existing.id,
+        created_at: now,
+        updated_at: now,
+      };
 
-    if (updatedSession.current_step < 1 || updatedSession.current_step > 4) {
-      throw new Error(`Invalid step value: ${updatedSession.current_step}`);
-    }
-
-    await kv.put(`session:${sessionId}`, JSON.stringify(updatedSession), {
-      expirationTtl: SESSION_TTL,
-    });
-
-    return updatedSession;
-  });
+      let newStep = existing.current_step;
+      if (
+        updatedSession.personal_info &&
+        PersonalInfoSchema.safeParse(updatedSession.personal_info).success
+      ) {
+        newStep = Math.max(newStep, 2);
+      }
+      if (
+        updatedSession.plan_selection &&
+        PlanSelectionSchema.safeParse(updatedSession.plan_selection).success
+      ) {
+        newStep = Math.max(newStep, 3);
+      }
+      if (
+        updatedSession.addons &&
+        AddonsSchema.safeParse({ addons: updatedSession.addons }).success
+      ) {
+        newStep = Math.max(newStep, 4);
+      }
+      updatedSession.current_step = newStep;
+      if (updatedSession.current_step < 1 || updatedSession.current_step > 4) {
+        throw new Error(`Invalid step value: ${updatedSession.current_step}`);
+      }
+      await kv.put(`session:${sessionId}`, JSON.stringify(updatedSession), {
+        expirationTtl: SESSION_TTL,
+      });
+      return updatedSession;
+    },
+    MAX_RETRIES,
+    INITIAL_RETRY_DELAY_MS,
+  );
 };
 
 // Routes
@@ -183,6 +244,7 @@ app.post("/init", async (c) => {
       session_id: sessionId,
       available_plans: PLANS,
       available_addons: ADDONS,
+      _links: getHATEOASLinks(sessionId, newSession),
     });
   } catch (error) {
     return c.json(
@@ -225,14 +287,13 @@ app.put(
         validatedSessionId,
         {
           personal_info: personalInfo as PersonalInfo,
-          current_step: 2,
         },
       );
 
       return c.json({
         status: "success",
         current_step: updatedSession.current_step,
-        next_step: updatedSession.current_step + 1,
+        _links: getHATEOASLinks(validatedSessionId, updatedSession),
       });
     } catch (error) {
       if (
@@ -297,14 +358,12 @@ app.put(
         validatedSessionId,
         {
           plan_selection: planSelection as PlanSelection,
-          current_step: 3,
         },
       );
 
       return c.json({
         status: "success",
         current_step: updatedSession.current_step,
-        next_step: updatedSession.current_step + 1,
         selected_plan: {
           id: selectedPlan.id,
           name: selectedPlan.name,
@@ -314,6 +373,7 @@ app.put(
               : selectedPlan.yearly_price,
           billing_period: planSelection.billing_period,
         },
+        _links: getHATEOASLinks(validatedSessionId, updatedSession),
       });
     } catch (error) {
       if (
@@ -362,7 +422,6 @@ app.put("/:sessionId/addons", zValidator("json", AddonsSchema), async (c) => {
       validatedSessionId,
       {
         addons,
-        current_step: 4,
       },
     );
 
@@ -380,8 +439,8 @@ app.put("/:sessionId/addons", zValidator("json", AddonsSchema), async (c) => {
     return c.json({
       status: "success",
       current_step: updatedSession.current_step,
-      next_step: updatedSession.current_step + 1,
       selected_addons: selectedAddons,
+      _links: getHATEOASLinks(validatedSessionId, updatedSession),
     });
   } catch (error) {
     if (
@@ -429,6 +488,39 @@ app.post("/:sessionId/submit", async (c) => {
       return c.json(
         errorResponse("Session not found", "No session with this ID exists"),
         404,
+      );
+    }
+
+    const errors: string[] = [];
+    if (
+      !session.personal_info ||
+      !PersonalInfoSchema.safeParse(session.personal_info).success
+    ) {
+      errors.push("Valid personal info is required");
+    }
+    if (
+      !session.plan_selection ||
+      !PlanSelectionSchema.safeParse(session.plan_selection).success
+    ) {
+      errors.push("Valid plan selection is required");
+    }
+    if (
+      !session.addons ||
+      !AddonsSchema.safeParse({ addons: session.addons }).success
+    ) {
+      errors.push("Valid add-ons selection is required");
+    }
+    if (errors.length > 0) {
+      return c.json(errorResponse("Incomplete data", errors.join("; ")), 400);
+    }
+
+    if (
+      !PersonalInfoSchema.safeParse(session.personal_info).success ||
+      !PlanSelectionSchema.safeParse(session.plan_selection).success
+    ) {
+      return c.json(
+        errorResponse("Invalid data", "Incomplete or invalid session data"),
+        400,
       );
     }
 
@@ -591,6 +683,7 @@ app.get("/:sessionId", async (c) => {
             : undefined;
         })
         .filter(Boolean),
+      _links: getHATEOASLinks(validatedSessionId, session),
     });
   } catch (error) {
     if (
@@ -614,78 +707,6 @@ app.get("/:sessionId", async (c) => {
     );
   }
 });
-
-// Navigate to specific step
-app.post(
-  "/:sessionId/navigate",
-  zValidator("json", NavigateSchema),
-  async (c) => {
-    const { sessionId } = c.req.param();
-
-    const parsedSessionId = sessionIdSchema.safeParse({ sessionId });
-
-    if (!parsedSessionId.success) {
-      return c.json(
-        errorResponse(
-          "Invalid session ID format",
-          parsedSessionId.error.errors[0].message,
-        ),
-        400,
-      );
-    }
-
-    const validatedSessionId = parsedSessionId.data.sessionId;
-
-    const { step } = c.req.valid("json");
-
-    try {
-      const session = await getSession(c.env.FORM_SESSION, validatedSessionId);
-      if (!session) {
-        return c.json(errorResponse("Session not found", "?"), 404);
-      }
-
-      // Don't allow jumping ahead
-      if (step > session.current_step) {
-        return c.json(
-          errorResponse(
-            "Cannot skip ahead",
-            "Only after alr going through all steps.",
-          ),
-          400,
-        );
-      }
-
-      await updateSession(c.env.FORM_SESSION, validatedSessionId, {
-        current_step: step,
-      });
-
-      return c.json({
-        status: "success",
-        current_step: step,
-      });
-    } catch (error) {
-      if (
-        error instanceof Error &&
-        error.message === "Session does not exist for update."
-      ) {
-        return c.json(
-          errorResponse(
-            "Session Not Found",
-            "The provided session ID does not exist or has expired.",
-          ),
-          404,
-        );
-      }
-      return c.json(
-        errorResponse(
-          "Failed to navigate to step",
-          error instanceof Error ? error.message : String(error),
-        ),
-        500,
-      );
-    }
-  },
-);
 
 app.delete("/:sessionId", async (c) => {
   const { sessionId } = c.req.param();

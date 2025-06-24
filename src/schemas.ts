@@ -37,8 +37,12 @@ export const sessionIdSchema = z.object({
   sessionId: z.string().length(21, "Invalid sessionId"),
 });
 
-export const sanitizePersonalInfo = (info: PersonalInfo): PersonalInfo => ({
-  ...info,
-  name: sanitizeHtml(info.name, { allowedTags: [], allowedAttributes: {} }),
-  email: info.email.trim().toLowerCase(),
-});
+export const sanitizePersonalInfo = (info: PersonalInfo): PersonalInfo => {
+  const phone = info.phone.replace(/[^\d+]/g, "");
+  if (phone.length < 10) throw new Error("Phone number too short");
+  return {
+    name: sanitizeHtml(info.name, { allowedTags: [], allowedAttributes: {} }),
+    email: info.email.trim().toLowerCase(),
+    phone,
+  };
+};
