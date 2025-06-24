@@ -11,7 +11,6 @@ import {
 import {
   AddonId,
   AddonsSchema,
-  // NavigateSchema,
   PersonalInfoSchema,
   PlanSelectionSchema,
   sanitizePersonalInfo,
@@ -83,31 +82,31 @@ const withRetry = async <T>(
   throw lastError;
 };
 
-const getHATEOASLinks = (
-  sessionId: string,
-  session: FormSession,
-): Record<string, { href: string; method: string }> => {
-  const baseUrl = `/${sessionId}`;
-  const links: Record<string, { href: string; method: string }> = {
-    self: { href: baseUrl, method: "GET" },
-    delete: { href: baseUrl, method: "DELETE" },
-  };
-
-  links.personal = { href: `${baseUrl}/personal`, method: "PUT" };
-  links.plan = { href: `${baseUrl}/plan`, method: "PUT" };
-  links.addons = { href: `${baseUrl}/addons`, method: "PUT" };
-  if (
-    session.personal_info &&
-    PersonalInfoSchema.safeParse(session.personal_info).success &&
-    session.plan_selection &&
-    PlanSelectionSchema.safeParse(session.plan_selection).success &&
-    session.addons &&
-    AddonsSchema.safeParse({ addons: session.addons }).success
-  ) {
-    links.submit = { href: `${baseUrl}/submit`, method: "POST" };
-  }
-  return links;
-};
+// const getHATEOASLinks = (
+//   sessionId: string,
+//   session: FormSession,
+// ): Record<string, { href: string; method: string }> => {
+//   const baseUrl = `/${sessionId}`;
+//   const links: Record<string, { href: string; method: string }> = {
+//     self: { href: baseUrl, method: "GET" },
+//     delete: { href: baseUrl, method: "DELETE" },
+//   };
+//
+//   links.personal = { href: `${baseUrl}/personal`, method: "PUT" };
+//   links.plan = { href: `${baseUrl}/plan`, method: "PUT" };
+//   links.addons = { href: `${baseUrl}/addons`, method: "PUT" };
+//   if (
+//     session.personal_info &&
+//     PersonalInfoSchema.safeParse(session.personal_info).success &&
+//     session.plan_selection &&
+//     PlanSelectionSchema.safeParse(session.plan_selection).success &&
+//     session.addons &&
+//     AddonsSchema.safeParse({ addons: session.addons }).success
+//   ) {
+//     links.submit = { href: `${baseUrl}/submit`, method: "POST" };
+//   }
+//   return links;
+// };
 
 // Middlewares
 app.use(prettyJSON());
@@ -244,7 +243,6 @@ app.post("/init", async (c) => {
       session_id: sessionId,
       available_plans: PLANS,
       available_addons: ADDONS,
-      _links: getHATEOASLinks(sessionId, newSession),
     });
   } catch (error) {
     return c.json(
@@ -293,7 +291,6 @@ app.put(
       return c.json({
         status: "success",
         current_step: updatedSession.current_step,
-        _links: getHATEOASLinks(validatedSessionId, updatedSession),
       });
     } catch (error) {
       if (
@@ -373,7 +370,6 @@ app.put(
               : selectedPlan.yearly_price,
           billing_period: planSelection.billing_period,
         },
-        _links: getHATEOASLinks(validatedSessionId, updatedSession),
       });
     } catch (error) {
       if (
@@ -440,7 +436,6 @@ app.put("/:sessionId/addons", zValidator("json", AddonsSchema), async (c) => {
       status: "success",
       current_step: updatedSession.current_step,
       selected_addons: selectedAddons,
-      _links: getHATEOASLinks(validatedSessionId, updatedSession),
     });
   } catch (error) {
     if (
@@ -683,7 +678,6 @@ app.get("/:sessionId", async (c) => {
             : undefined;
         })
         .filter(Boolean),
-      _links: getHATEOASLinks(validatedSessionId, session),
     });
   } catch (error) {
     if (
