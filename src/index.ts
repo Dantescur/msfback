@@ -72,7 +72,7 @@ const withRetry = async <T>(
     } catch (error) {
       lastError = error;
       if (error instanceof Error && error.message.includes("permission"))
-        throw error; // Fail fast
+        throw error;
       if (attempt < maxRetries - 1)
         await new Promise((r) =>
           setTimeout(r, initialDelayMs * Math.pow(2, attempt)),
@@ -81,32 +81,6 @@ const withRetry = async <T>(
   }
   throw lastError;
 };
-
-// const getHATEOASLinks = (
-//   sessionId: string,
-//   session: FormSession,
-// ): Record<string, { href: string; method: string }> => {
-//   const baseUrl = `/${sessionId}`;
-//   const links: Record<string, { href: string; method: string }> = {
-//     self: { href: baseUrl, method: "GET" },
-//     delete: { href: baseUrl, method: "DELETE" },
-//   };
-//
-//   links.personal = { href: `${baseUrl}/personal`, method: "PUT" };
-//   links.plan = { href: `${baseUrl}/plan`, method: "PUT" };
-//   links.addons = { href: `${baseUrl}/addons`, method: "PUT" };
-//   if (
-//     session.personal_info &&
-//     PersonalInfoSchema.safeParse(session.personal_info).success &&
-//     session.plan_selection &&
-//     PlanSelectionSchema.safeParse(session.plan_selection).success &&
-//     session.addons &&
-//     AddonsSchema.safeParse({ addons: session.addons }).success
-//   ) {
-//     links.submit = { href: `${baseUrl}/submit`, method: "POST" };
-//   }
-//   return links;
-// };
 
 // Middlewares
 app.use(prettyJSON());
@@ -153,7 +127,7 @@ const getSession = async (
     },
     3,
     200,
-  ); // 3 retries with exponential backoff starting at 200ms
+  ); // 3 retries
 };
 
 const updateSession = async (
